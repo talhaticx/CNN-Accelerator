@@ -6,7 +6,7 @@ module relu (
 );
 
     always_comb begin
-        if (in[19])
+        if (in[15])
             out = 0;
         else
             out = in >>> 8;
