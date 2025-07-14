@@ -3,7 +3,7 @@
 module mac(
     input  logic signed [8:0] feature [2:0][2:0],
     input  logic signed [7:0] kernel  [2:0][2:0],
-    output logic signed [31:0] result
+    output logic signed [19:0] result
 );
     logic signed [15:0] p[8:0]; // products
 
