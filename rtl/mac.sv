@@ -4,7 +4,7 @@
 module mac(
     input logic signed [7:0] feature [0:2][0:2],  // 3x3 feature window
     input logic signed [7:0] kernel [0:2][0:2],   // 3x3 kernel weights
-    output logic signed [19:0] result             // 32-bit result
+    output logic signed [31:0] result             // 32-bit result
 );
     // Intermediate products (8-bit * 8-bit = 16-bit)
     logic signed [15:0] products [0:8];

@@ -1,110 +1,124 @@
-module conv (
-    input logic clk,                // System clock
-    input logic reset,              // Active-high reset
-    input logic en,                 // Enable signal
-    input logic signed [7:0] activation_in [0:5][0:5],  // 6x6 input feature map
-    input logic signed [7:0] kernel [0:2][0:2],         // 3x3 convolution kernel
-    output logic [7:0] activation_out [0:3][0:3],       // 4x4 output feature map
-    output logic done_conv          // Convolution complete flag
+module conv #(
+    parameter int IFMAP_HEIGHT  = 6,
+    parameter int IFMAP_WIDTH   = 6,
+
+    parameter int KERNEL_HEIGHT = 3,
+    parameter int KERNEL_WIDTH  = 3,
+
+    parameter int OFMAP_HEIGHT  = 4,
+    parameter int OFMAP_WIDTH   = 4,
+
+    parameter int DATA_WIDTH    = 8      // Bit-width for input/output values
+)(
+    input  logic clk,                                       // System clock
+    input  logic reset,                                     // Active-high reset
+    input  logic en,                                        // Enable signal for starting convolution
+
+    input  logic signed [DATA_WIDTH-1:0] ifmap [0:IFMAP_HEIGHT-1][0:IFMAP_WIDTH-1],             // Input Feature Map: 6x6 image (signed for flexibility)
+    input  logic signed [DATA_WIDTH-1:0] weights [0:KERNEL_HEIGHT-1][0:KERNEL_WIDTH-1],         // 3x3 Convolution Kernel (signed values)
+    output logic [DATA_WIDTH-1:0] ofmap [0:OFMAP_HEIGHT-1][0:OFMAP_WIDTH-1],                    // Output Feature Map: 4x4 convolved output (unsigned, ReLU applied)
+    
+    output logic              done_conv                     // Done flag: High when convolution is complete
 );
 
-    // 3x3 sliding window (unpacked array for direct MAC connection)
-    logic signed [7:0] window [0:2][0:2];
-    
-    // MAC result (32-bit to prevent overflow)
-    logic signed [31:0] mac_result;
-    
-    // Intermediate result before ReLU
-    logic signed [7:0] conv_result;
-    
-    // Output counters (4x4 = 0-3)
-    logic [1:0] row, col;
-    logic iter_done;
+    // 3x3 sliding window extracted from input feature map
+    logic signed [DATA_WIDTH-1:0] window_data [0:KERNEL_HEIGHT-1][0:KERNEL_WIDTH-1];
 
-    // State machine definition
-    typedef enum logic [2:0] {
-        IDLE,       // Waiting for enable
-        LOAD_WIN,   // Load window from input
-        MAC,        // Perform multiply-accumulate
-        RELU,       // Apply ReLU activation
-        STORE,      // Store result to output
-        STEP,       // Move to next position
-        DONE        // Operation complete
+    // MAC unit output: 32-bit to prevent overflow from 3x3 accumulation
+    logic signed [31:0] mac_out;
+
+    // Output after ReLU activation function (clipped to 8 bits)
+    logic signed [DATA_WIDTH-1:0] relu_out;
+
+    // Current row and column position in the output feature map (4x4)
+    logic [$clog2(OFMAP_HEIGHT)-1:0] out_row;
+    logic [$clog2(OFMAP_WIDTH)-1:0]  out_col;
+
+    // Flag to indicate the last pixel of output is being processed
+    logic       is_last_pixel;
+
+    // Finite State Machine states
+    typedef enum logic [1:0] {
+        STATE_IDLE,     // Waiting for enable signal
+        STATE_PROCESS,  // Perform convolution operation (load window, MAC, ReLU, write output)
+        STATE_DONE      // All pixels processed, raise done_conv
     } conv_state_t;
 
     conv_state_t current_state, next_state;
 
-    // MAC Unit Instantiation
+    // MAC (Multiply-Accumulate) Unit instantiation
+    // Takes a 3x3 window and 3x3 kernel, computes sum of element-wise products
     mac mac_inst (
-        .feature(window),  // Direct 3x3 window connection
-        .kernel(kernel),   // Kernel weights
-        .result(mac_result)
+        .feature(window_data),
+        .kernel(weights),
+        .result(mac_out)
     );
 
-    // State Register
+    // State Register: Advances FSM on every clock if enabled
     always_ff @(posedge clk or posedge reset) begin
-        if (reset || ~en) current_state <= IDLE;
-        else current_state <= next_state;
+        if (reset || ~en)
+            current_state <= STATE_IDLE;  // Reset to idle on reset or disable
+        else
+            current_state <= next_state;  // Move to next state
     end
 
-    // Next State Logic
+    // FSM Next State Logic
     always_comb begin
         case (current_state)
-            IDLE:     next_state = en ? LOAD_WIN : IDLE;
-            LOAD_WIN: next_state = MAC;
-            MAC:      next_state = RELU;
-            RELU:     next_state = STORE;
-            STORE:    next_state = STEP;
-            STEP:     next_state = iter_done ? DONE : LOAD_WIN;
-            DONE:     next_state = DONE;
-            default:  next_state = IDLE;
+            STATE_IDLE:     next_state = en ? STATE_PROCESS : STATE_IDLE;
+            STATE_PROCESS:  next_state = is_last_pixel ? STATE_DONE : STATE_PROCESS;
+            STATE_DONE:     next_state = STATE_DONE;
+            default:        next_state = STATE_IDLE;
         endcase
     end
 
-    // Row/Column Counters
+    // Output Row/Column Counter Logic
+    // Traverses the 4x4 OFMAP grid from (0,0) to (3,3)
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
-            row <= 0;
-            col <= 0;
-        end
-        else if (en && current_state == STEP) begin
-            if (col == 3) begin
-                col <= 0;
-                row <= row + 1;
+            out_row <= 0;
+            out_col <= 0;
+        end else if (en && current_state == STATE_PROCESS) begin
+            if (out_col == OFMAP_WIDTH-1) begin
+                out_col <= 0;
+                out_row <= out_row + 1;
             end else begin
-                col <= col + 1;
+                out_col <= out_col + 1;
             end
         end
     end
 
-    // Window Loading Logic with Boundary Checking
+    // Load the 3x3 window from the IFMAP
+    // Handles boundary by clamping to the max index (5)
     always_comb begin
-        for (int i = 0; i < 3; i++) begin
-            for (int j = 0; j < 3; j++) begin
-                // Calculate indices with boundary protection
-                automatic int r_idx = (row + i > 5) ? 5 : row + i;
-                automatic int c_idx = (col + j > 5) ? 5 : col + j;
-                window[i][j] = activation_in[r_idx][c_idx];
-            end
-        end
+        // Row 0
+        window_data[0][0] = ifmap[out_row + 0 > IFMAP_HEIGHT-1 ? IFMAP_HEIGHT-1 : out_row + 0][out_col + 0 > IFMAP_WIDTH-1 ? IFMAP_WIDTH-1 : out_col + 0];
+        window_data[0][1] = ifmap[out_row + 0 > IFMAP_HEIGHT-1 ? IFMAP_HEIGHT-1 : out_row + 0][out_col + 1 > IFMAP_WIDTH-1 ? IFMAP_WIDTH-1 : out_col + 1];
+        window_data[0][2] = ifmap[out_row + 0 > IFMAP_HEIGHT-1 ? IFMAP_HEIGHT-1 : out_row + 0][out_col + 2 > IFMAP_WIDTH-1 ? IFMAP_WIDTH-1 : out_col + 2];
+
+        // Row 1
+        window_data[1][0] = ifmap[out_row + 1 > IFMAP_HEIGHT-1 ? IFMAP_HEIGHT-1 : out_row + 1][out_col + 0 > IFMAP_WIDTH-1 ? IFMAP_WIDTH-1 : out_col + 0];
+        window_data[1][1] = ifmap[out_row + 1 > IFMAP_HEIGHT-1 ? IFMAP_HEIGHT-1 : out_row + 1][out_col + 1 > IFMAP_WIDTH-1 ? IFMAP_WIDTH-1 : out_col + 1];
+        window_data[1][2] = ifmap[out_row + 1 > IFMAP_HEIGHT-1 ? IFMAP_HEIGHT-1 : out_row + 1][out_col + 2 > IFMAP_WIDTH-1 ? IFMAP_WIDTH-1 : out_col + 2];
+
+        // Row 2
+        window_data[2][0] = ifmap[out_row + 2 > IFMAP_HEIGHT-1 ? IFMAP_HEIGHT-1 : out_row + 2][out_col + 0 > IFMAP_WIDTH-1 ? IFMAP_WIDTH-1 : out_col + 0];
+        window_data[2][1] = ifmap[out_row + 2 > IFMAP_HEIGHT-1 ? IFMAP_HEIGHT-1 : out_row + 2][out_col + 1 > IFMAP_WIDTH-1 ? IFMAP_WIDTH-1 : out_col + 1];
+        window_data[2][2] = ifmap[out_row + 2 > IFMAP_HEIGHT-1 ? IFMAP_HEIGHT-1 : out_row + 2][out_col + 2 > IFMAP_WIDTH-1 ? IFMAP_WIDTH-1 : out_col + 2];
     end
 
-    // ReLU Activation Function
+    // ReLU Activation and Output Storage
+    // ReLU: output = max(0, MAC_result)
+    // Also clips MAC result to 8-bit for OFMAP
     always_comb begin
-        // Clip MAC result to 8 bits first
-        conv_result = mac_result[7:0];
-        
-        // ReLU: max(0, x)
-        if (conv_result[7]) begin  // If negative (MSB set)
-            activation_out[row][col] = 8'b0;
-        end else begin
-            activation_out[row][col] = conv_result;
-        end
+        relu_out = mac_out[DATA_WIDTH-1:0];  // Truncate to 8-bit
+        ofmap[out_row][out_col] = relu_out[DATA_WIDTH-1] ? '0 : relu_out;  // ReLU: if negative, set to 0
     end
 
-    // Output Storage (now handled in ReLU block)
-    // Completion Detection
-    assign iter_done = (row == 3) && (col == 3);
-    assign done_conv = (current_state == DONE);
+    // Flag to detect end of 4x4 grid traversal
+    assign is_last_pixel = (out_row == OFMAP_HEIGHT-1) && (out_col == OFMAP_WIDTH-1);
+
+    // Output done signal when FSM enters DONE state
+    assign done_conv = (current_state == STATE_DONE);
 
 endmodule
