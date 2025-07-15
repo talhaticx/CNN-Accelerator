@@ -7,6 +7,7 @@ BUILD_DIR     := build
 DESIGN_FILES  := $(wildcard $(RTL_DIR)/*.sv)
 TB_FILES      := $(wildcard $(TB_DIR)/*.sv)
 VCD_FILE      := wave.vcd
+IMG 		  := test/imgs/image2.png
 
 # Tools
 VLOG          := vlog
@@ -36,8 +37,18 @@ wave:
 	$(GTKWAVE) $(VCD_FILE) myview.sav 2>/dev/null &
 
 # Full flow: compile → simulate → view waveforms
-run: sim wave
+run: clean imgToTxt sim png
 
 # Clean build artifacts
 clean:
-	rm -rf $(BUILD_DIR) transcript *.vcd *.wlf
+	rm -rf $(BUILD_DIR) transcript *.vcd *.wlf *.png *.pgm *.txt
+
+img:
+	convert $(IMG) -resize 128x128! -compress none -depth 8 img.pgm
+
+imgToTxt: img
+	python3 scripts/pgmToTxt.py
+
+png:
+	python3 scripts/txtToPng.py
+	open ofmap.png
