@@ -4,7 +4,7 @@
 module mac(
     input logic signed [7:0] feature [0:2][0:2],  // 3x3 feature window
     input logic signed [7:0] kernel [0:2][0:2],   // 3x3 kernel weights
-    output logic signed [21:0] result             // 32-bit result
+    output logic signed [19:0] result             // 32-bit result
 );
     // Intermediate products (8-bit * 8-bit = 16-bit)
     logic signed [15:0] products [0:8];
@@ -13,6 +13,8 @@ module mac(
     logic signed [16:0] sum_stage1 [0:3];  // 17-bit after first add
     logic signed [17:0] sum_stage2 [0:1];  // 18-bit after second add
     logic signed [18:0] sum_stage3;        // 19-bit after third add
+
+    logic signed [18:0] extender;
 
     // Multiplication Stage
     always_comb begin
@@ -39,8 +41,9 @@ module mac(
 
     // Final Summation
     always_comb begin
+        extender = {3'b0,products[8]};
         sum_stage3 = sum_stage2[0] + sum_stage2[1];
-        result = sum_stage3 + products[8]; // Include last product
+        result = sum_stage3 + extender; // Include last product
     end
 
 endmodule
