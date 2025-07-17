@@ -1,49 +1,39 @@
 // Multiply-Accumulate Unit
 // Performs element-wise multiplication and summation
-// of 3x3 feature window and kernel
-module mac(
-    input logic signed [7:0] feature [0:2][0:2],  // 3x3 feature window
-    input logic signed [7:0] kernel [0:2][0:2],   // 3x3 kernel weights
-    output logic signed [19:0] result             // 32-bit result
+// of feature window and kernel
+module mac #(
+    parameter int KERNEL_SIZE = 5,
+    parameter int DATA_WIDTH = 8
+)(
+    input logic signed [DATA_WIDTH-1:0] feature [0:KERNEL_SIZE-1][0:KERNEL_SIZE-1],
+    input logic signed [DATA_WIDTH-1:0] kernel [0:KERNEL_SIZE-1][0:KERNEL_SIZE-1],
+    output logic signed [DATA_WIDTH*2+`$clog2(KERNEL_SIZE*KERNEL_SIZE)-1:0] result
 );
-    // Intermediate products (8-bit * 8-bit = 16-bit)
-    logic signed [15:0] products [0:8];
-    
-    // Adder tree stages
-    logic signed [16:0] sum_stage1 [0:3];  // 17-bit after first add
-    logic signed [17:0] sum_stage2 [0:1];  // 18-bit after second add
-    logic signed [18:0] sum_stage3;        // 19-bit after third add
 
-    logic signed [18:0] extender;
+    localparam int NUM_PRODUCTS = KERNEL_SIZE * KERNEL_SIZE;
+    localparam int PRODUCT_WIDTH = DATA_WIDTH * 2;
+    localparam int RESULT_WIDTH = PRODUCT_WIDTH + `$clog2(NUM_PRODUCTS);
+
+    logic signed [PRODUCT_WIDTH-1:0] products [0:NUM_PRODUCTS-1];
+    logic signed [RESULT_WIDTH-1:0] temp_sum;
 
     // Multiplication Stage
     always_comb begin
-        for (int i = 0; i < 3; i++) begin
-            for (int j = 0; j < 3; j++) begin
-                products[i*3 + j] = feature[i][j] * kernel[i][j];
+        for (int i = 0; i < KERNEL_SIZE; i++) begin
+            for (int j = 0; j < KERNEL_SIZE; j++) begin
+                products[i*KERNEL_SIZE + j] = feature[i][j] * kernel[i][j];
             end
         end
     end
 
-    // Adder Tree Stage 1
+    // Adder Tree
     always_comb begin
-        sum_stage1[0] = products[0] + products[1];
-        sum_stage1[1] = products[2] + products[3];
-        sum_stage1[2] = products[4] + products[5];
-        sum_stage1[3] = products[6] + products[7];
+        temp_sum = '0;
+        for (int i = 0; i < NUM_PRODUCTS; i++) begin
+            temp_sum = temp_sum + products[i];
+        end
     end
 
-    // Adder Tree Stage 2
-    always_comb begin
-        sum_stage2[0] = sum_stage1[0] + sum_stage1[1];
-        sum_stage2[1] = sum_stage1[2] + sum_stage1[3];
-    end
-
-    // Final Summation
-    always_comb begin
-        extender = {3'b0,products[8]};
-        sum_stage3 = sum_stage2[0] + sum_stage2[1];
-        result = sum_stage3 + extender; // Include last product
-    end
+    assign result = temp_sum;
 
 endmodule

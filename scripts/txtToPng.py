@@ -11,4 +11,4 @@ def txt_to_png(txt_file, png_file, width, height):
     img.save(png_file)
 
 # Example usage:
-txt_to_png('ofmap.txt', 'ofmap.png', 126, 126)
+txt_to_png('ofmap.txt', 'ofmap.png', 62, 62)

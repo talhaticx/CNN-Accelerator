@@ -1,8 +1,8 @@
 module conv #(
-    parameter int IFMAP_HEIGHT  = 6,
-    parameter int IFMAP_WIDTH   = 6,
-    parameter int KERNEL_HEIGHT = 3,
-    parameter int KERNEL_WIDTH  = 3,
+    parameter int IFMAP_HEIGHT  = 128,
+    parameter int IFMAP_WIDTH   = 128,
+    parameter int KERNEL_HEIGHT = 5,
+    parameter int KERNEL_WIDTH  = 5,
     parameter int DATA_WIDTH    = 8,
     parameter int H_STRIDE      = 1,      // Horizontal stride
     parameter int V_STRIDE      = 1,      // Vertical stride
@@ -30,7 +30,7 @@ module conv #(
 
     // MAC unit output
     // logic signed [31:0] mac_out;
-    logic signed [21:0] mac_result;
+    logic signed [32:0] mac_result;
 
     // Output after ReLU activation function
     logic signed [DATA_WIDTH-1:0] relu_out;
@@ -53,7 +53,10 @@ module conv #(
 
     // MAC (Multiply-Accumulate) Unit
 
-    mac mac_unit (
+    mac #(
+        .KERNEL_SIZE(KERNEL_WIDTH),
+        .DATA_WIDTH(DATA_WIDTH)
+    ) mac_unit (
         .feature(window_data),
         .kernel(weights),
         .result(mac_result)
